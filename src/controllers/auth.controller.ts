@@ -12,17 +12,21 @@ const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET as string;
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { firstname, lastname, email, password, role } = req.body;
+    const { firstname, lastname, email, password } = req.body;
 
-    if (!firstname || !lastname || !email || !password || !role) {
+    if (!firstname || !lastname || !email || !password) {
       res.status(400).json({ message: "All fields are required" });
       return;
     }
 
-    if (role !== Role.USER && role !== Role.AUTHOR) {
-      res.status(400).json({ message: "Invalid role" });
-      return;
-    }
+    // ========== TEMPORARY: Only USER registration allowed ==========
+    // Comment out role field and validation for now
+    // const { role } = req.body;
+    // if (role && role !== Role.USER && role !== Role.AUTHOR) {
+    //   res.status(400).json({ message: "Invalid role" });
+    //   return;
+    // }
+    // ===============================================================
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -31,16 +35,25 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const approvalStatus = role === Role.AUTHOR ? Status.PENDING : Status.APPROVED;
+    
+    // ========== TEMPORARY: Force USER role ==========
+    const userRole = Role.USER; // Hardcoded
+    const approvalStatus = Status.APPROVED; // Auto-approve all users
+    
+    // Original logic (commented out for now):
+    // const userRole = role || Role.USER; // Use provided role or default to USER
+    // const approvalStatus = userRole === Role.AUTHOR ? Status.PENDING : Status.APPROVED;
+    // =================================================
+
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
 
     const newUser = new User({
       firstname,
       lastname,
       email,
       password: hashedPassword,
-      roles: [role],
+      roles: [userRole],
       approved: approvalStatus,
       otp,
       otpExpires,
@@ -55,7 +68,9 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       data: {
         id: newUser._id,
         email: newUser.email,
-        roles: newUser.roles
+        roles: newUser.roles,
+        // Remove role-specific message temporarily
+        // approved: newUser.approved
       }
     });
   } catch (err: any) {
