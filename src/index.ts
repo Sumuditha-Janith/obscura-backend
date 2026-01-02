@@ -4,6 +4,8 @@ import authRouter from "./routes/auth.routes";
 import mediaRouter from "./routes/media.routes";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
+import passwordRouter from "./routes/password.routes";
+
 dotenv.config();
 
 const SERVER_PORT = process.env.SERVER_PORT || 5000;
@@ -39,3 +41,5 @@ mongoose
 app.listen(SERVER_PORT, () => {
   console.log(`🚀 Server running on http://localhost:${SERVER_PORT}`);
 });
+
+app.use("/api/v1/password", passwordRouter);
