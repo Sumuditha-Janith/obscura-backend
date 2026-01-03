@@ -3,6 +3,7 @@ import { Media } from "../models/Media";
 import { AuthRequest } from "../middleware/auth";
 import TMDBService, { TMDBMovie, TMDBTVShow } from "../services/tmdb.service";
 import mongoose from "mongoose";
+import { Episode } from "../models/Episode";
 
 export const searchMedia = async (req: Request, res: Response): Promise<void> => {
     try {
@@ -519,6 +520,294 @@ export const getPopularMovies = async (req: Request, res: Response): Promise<voi
     }
 };
 
+export const getTVShowEpisodes = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const { tmdbId } = req.params;
+    const { season } = req.query;
+
+    if (!tmdbId) {
+      res.status(400).json({ message: "TMDB ID is required" });
+      return;
+    }
+
+    const filter: any = { 
+      addedBy: req.user.sub,
+      tmdbId: Number(tmdbId)
+    };
+
+    if (season) {
+      filter.seasonNumber = Number(season);
+    }
+
+    const episodes = await Episode.find(filter)
+      .sort({ seasonNumber: 1, episodeNumber: 1 })
+      .lean();
+
+    // Get episode details from TMDB if needed
+    if (episodes.length === 0 && !season) {
+      try {
+        const tvDetails = await TMDBService.getTVDetails(Number(tmdbId));
+        const seasons = tvDetails.seasons || [];
+        
+        // You could fetch all episodes here, but for performance, 
+        // we'll just return the season structure
+        res.status(200).json({
+          message: "TV show seasons fetched",
+          data: {
+            seasons,
+            episodes: [] // Empty episodes array, needs to be populated
+          }
+        });
+        return;
+      } catch (error) {
+        console.error("Failed to fetch TV details:", error);
+      }
+    }
+
+    // Group episodes by season
+    const episodesBySeason: Record<number, any[]> = {};
+    episodes.forEach(episode => {
+      if (!episodesBySeason[episode.seasonNumber]) {
+        episodesBySeason[episode.seasonNumber] = [];
+      }
+      episodesBySeason[episode.seasonNumber].push(episode);
+    });
+
+    res.status(200).json({
+      message: "TV show episodes fetched successfully",
+      data: {
+        episodesBySeason,
+        totalEpisodes: episodes.length,
+        watchedEpisodes: episodes.filter(e => e.watchStatus === "watched").length
+      }
+    });
+  } catch (err: any) {
+    console.error("Get TV episodes error:", err);
+    res.status(500).json({ message: err?.message });
+  }
+};
+
+export const addTVShowToWatchlist = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const { tmdbId, title, type, posterPath, backdrop_path, seasonCount, episodeCount } = req.body;
+
+    if (!tmdbId || !title || type !== "tv") {
+      res.status(400).json({ message: "Invalid TV show data" });
+      return;
+    }
+
+    // Check if TV show already exists in watchlist
+    const existingTVShow = await Media.findOne({
+      tmdbId,
+      addedBy: req.user.sub,
+      type: "tv"
+    });
+
+    if (existingTVShow) {
+      res.status(400).json({ message: "TV show already in your watchlist" });
+      return;
+    }
+
+    // Get TV show details from TMDB
+    let tvDetails: any = {};
+    try {
+      tvDetails = await TMDBService.getTVDetails(tmdbId);
+    } catch (error) {
+      console.error("Failed to fetch TV details:", error);
+    }
+
+    // Create TV show entry in Media collection
+    const newTVShow = new Media({
+      tmdbId,
+      title,
+      type: "tv",
+      posterPath: posterPath || tvDetails.poster_path || "",
+      backdrop_path: backdrop_path || tvDetails.backdrop_path || "",
+      releaseDate: tvDetails.first_air_date || "",
+      addedBy: req.user.sub,
+      watchStatus: "planned",
+      watchTimeMinutes: 0, // Will be calculated based on watched episodes
+      vote_average: tvDetails.vote_average || 0,
+      vote_count: tvDetails.vote_count || 0,
+      overview: tvDetails.overview || "",
+      seasonCount: seasonCount || tvDetails.number_of_seasons || 1,
+      episodeCount: episodeCount || tvDetails.number_of_episodes || 1
+    });
+
+    await newTVShow.save();
+
+    res.status(201).json({
+      message: "TV show added to watchlist successfully",
+      data: newTVShow
+    });
+  } catch (err: any) {
+    console.error("Add TV show error:", err);
+    res.status(500).json({ message: err?.message });
+  }
+};
+
+export const fetchTVShowEpisodes = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const { tmdbId, season } = req.params;
+
+    // Fetch episodes from TMDB
+    const tmdbResponse = await TMDBService.getTVSeasonDetails(Number(tmdbId), Number(season));
+
+    // Store episodes in database
+    const episodesToSave = tmdbResponse.episodes.map((episode: any) => ({
+      tmdbId: Number(tmdbId),
+      seasonNumber: Number(season),
+      episodeNumber: episode.episode_number,
+      episodeTitle: episode.name,
+      airDate: episode.air_date,
+      overview: episode.overview,
+      runtime: episode.runtime || 45,
+      stillPath: episode.still_path,
+      addedBy: req.user!.sub,
+      watchStatus: "unwatched"
+    }));
+
+    // Bulk upsert episodes
+    for (const episode of episodesToSave) {
+      await Episode.updateOne(
+        {
+          tmdbId: episode.tmdbId,
+          seasonNumber: episode.seasonNumber,
+          episodeNumber: episode.episodeNumber,
+          addedBy: episode.addedBy
+        },
+        episode,
+        { upsert: true }
+      );
+    }
+
+    res.status(200).json({
+      message: `Season ${season} episodes fetched and saved successfully`,
+      data: {
+        season: Number(season),
+        episodeCount: episodesToSave.length
+      }
+    });
+  } catch (err: any) {
+    console.error("Fetch episodes error:", err);
+    res.status(500).json({ message: err?.message });
+  }
+};
+
+export const updateEpisodeStatus = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const { episodeId } = req.params;
+    const { watchStatus, rating } = req.body;
+
+    if (!episodeId) {
+      res.status(400).json({ message: "Episode ID is required" });
+      return;
+    }
+
+    if (watchStatus && !["unwatched", "watched", "skipped"].includes(watchStatus)) {
+      res.status(400).json({ message: "Invalid watch status" });
+      return;
+    }
+
+    const episode = await Episode.findById(episodeId);
+    if (!episode || episode.addedBy.toString() !== req.user.sub) {
+      res.status(404).json({ message: "Episode not found" });
+      return;
+    }
+
+    if (watchStatus) {
+      episode.watchStatus = watchStatus;
+      if (watchStatus === "watched") {
+        episode.watchedAt = new Date();
+      } else if (watchStatus === "unwatched") {
+        episode.watchedAt = undefined;
+      }
+    }
+
+    if (rating !== undefined) {
+      if (rating < 1 || rating > 5) {
+        res.status(400).json({ message: "Rating must be between 1 and 5" });
+        return;
+      }
+      episode.rating = rating;
+    }
+
+    await episode.save();
+
+    // Update TV show watch time and status
+    await updateTVShowStats(req.user.sub, episode.tmdbId);
+
+    res.status(200).json({
+      message: "Episode status updated successfully",
+      data: episode
+    });
+  } catch (err: any) {
+    console.error("Update episode error:", err);
+    res.status(500).json({ message: err?.message });
+  }
+};
+
+// Helper function to update TV show stats
+const updateTVShowStats = async (userId: string, tmdbId: number) => {
+  try {
+    // Get all episodes for this TV show
+    const episodes = await Episode.find({
+      addedBy: userId,
+      tmdbId
+    });
+
+    // Calculate watched episodes and total watch time
+    const watchedEpisodes = episodes.filter(e => e.watchStatus === "watched");
+    const totalWatchTime = watchedEpisodes.reduce((sum, ep) => sum + (ep.runtime || 45), 0);
+    const totalEpisodes = episodes.length;
+
+    // Update TV show in Media collection
+    const tvShow = await Media.findOne({
+      addedBy: userId,
+      tmdbId,
+      type: "tv"
+    });
+
+    if (tvShow) {
+      tvShow.watchTimeMinutes = totalWatchTime;
+      
+      // Update overall watch status
+      if (watchedEpisodes.length === 0) {
+        tvShow.watchStatus = "planned";
+      } else if (watchedEpisodes.length === totalEpisodes) {
+        tvShow.watchStatus = "completed";
+      } else {
+        tvShow.watchStatus = "watching";
+      }
+
+      await tvShow.save();
+    }
+  } catch (error) {
+    console.error("Update TV show stats error:", error);
+  }
+};
+
+////////////////////////////// For Debugging ////////////////////////////// 
 export const debugWatchlist = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     if (!req.user) {
@@ -583,8 +872,6 @@ export const debugWatchlist = async (req: AuthRequest, res: Response): Promise<v
     res.status(500).json({ message: err?.message });
   }
 };
-
-/////////////////////////////////
 
 export const testStats = async (req: AuthRequest, res: Response): Promise<void> => {
   try {

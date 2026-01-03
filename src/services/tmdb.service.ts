@@ -202,6 +202,45 @@ class TMDBService {
       throw new Error(`Failed to fetch genres: ${error.message}`);
     }
   }
+  
+  // Get TV season details
+async getTVSeasonDetails(tvId: number, seasonNumber: number): Promise<any> {
+  try {
+    const response = await this.axiosInstance.get(`/tv/${tvId}/season/${seasonNumber}`);
+    return response.data;
+  } catch (error) {
+    console.error("TMDB Season Details Error:", error);
+    throw new Error("Failed to fetch season details");
+  }
+}
+
+// Get all TV show seasons
+async getTVSeasons(tvId: number): Promise<any> {
+  try {
+    const response = await this.axiosInstance.get(`/tv/${tvId}`);
+    return {
+      seasons: response.data.seasons,
+      totalSeasons: response.data.number_of_seasons,
+      totalEpisodes: response.data.number_of_episodes
+    };
+  } catch (error) {
+    console.error("TMDB Seasons Error:", error);
+    throw new Error("Failed to fetch TV seasons");
+  }
+}
+
+// Search TV shows only
+async searchTVShows(query: string, page: number = 1): Promise<TMDBResponse> {
+  try {
+    const response = await this.axiosInstance.get("/search/tv", {
+      params: { query, page },
+    });
+    return response.data;
+  } catch (error) {
+    console.error("TMDB TV Search Error:", error);
+    throw new Error("Failed to search TV shows");
+  }
+}
 
   // Get image URL helper
   getImageUrl(path: string | null, size: 'w92' | 'w154' | 'w185' | 'w342' | 'w500' | 'w780' | 'original' = 'w500'): string {

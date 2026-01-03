@@ -10,6 +10,10 @@ import {
   getTrending,
   getPopularMovies,
   debugWatchlist,
+  getTVShowEpisodes,
+  addTVShowToWatchlist,
+  fetchTVShowEpisodes,
+  updateEpisodeStatus,
 
 } from "../controllers/media.controller";
 import { authenticate } from "../middleware/auth";
@@ -22,6 +26,12 @@ router.get("/search", searchMedia);
 router.get("/details/:type/:tmdbId", getMediaDetails);
 router.get("/trending", getTrending);
 router.get("/popular", getPopularMovies);
+router.post("/watchlist", authenticate, addToWatchlist); // For movies
+router.post("/watchlist/tv", authenticate, addTVShowToWatchlist); // For TV shows
+router.get("/watchlist", authenticate, getWatchlist);
+router.get("/tv/:tmdbId/episodes", authenticate, getTVShowEpisodes);
+router.post("/tv/:tmdbId/season/:season/fetch", authenticate, fetchTVShowEpisodes);
+router.put("/episodes/:episodeId/status", authenticate, updateEpisodeStatus);
 
 // Protected routes (authentication required)
 router.post("/watchlist", authenticate, addToWatchlist);
