@@ -548,27 +548,6 @@ export const getTVShowEpisodes = async (req: AuthRequest, res: Response): Promis
       .sort({ seasonNumber: 1, episodeNumber: 1 })
       .lean();
 
-    // Get episode details from TMDB if needed
-    if (episodes.length === 0 && !season) {
-      try {
-        const tvDetails = await TMDBService.getTVDetails(Number(tmdbId));
-        const seasons = tvDetails.seasons || [];
-        
-        // You could fetch all episodes here, but for performance, 
-        // we'll just return the season structure
-        res.status(200).json({
-          message: "TV show seasons fetched",
-          data: {
-            seasons,
-            episodes: [] // Empty episodes array, needs to be populated
-          }
-        });
-        return;
-      } catch (error) {
-        console.error("Failed to fetch TV details:", error);
-      }
-    }
-
     // Group episodes by season
     const episodesBySeason: Record<number, any[]> = {};
     episodes.forEach(episode => {
@@ -583,7 +562,8 @@ export const getTVShowEpisodes = async (req: AuthRequest, res: Response): Promis
       data: {
         episodesBySeason,
         totalEpisodes: episodes.length,
-        watchedEpisodes: episodes.filter(e => e.watchStatus === "watched").length
+        watchedEpisodes: episodes.filter(e => e.watchStatus === "watched").length,
+        skippedEpisodes: episodes.filter(e => e.watchStatus === "skipped").length
       }
     });
   } catch (err: any) {
@@ -591,6 +571,8 @@ export const getTVShowEpisodes = async (req: AuthRequest, res: Response): Promis
     res.status(500).json({ message: err?.message });
   }
 };
+
+
 
 export const addTVShowToWatchlist = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -735,14 +717,15 @@ export const updateEpisodeStatus = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
-    if (watchStatus) {
-      episode.watchStatus = watchStatus;
-      if (watchStatus === "watched") {
-        episode.watchedAt = new Date();
-      } else if (watchStatus === "unwatched") {
-        episode.watchedAt = undefined;
-      }
-    }
+    // const oldStatus = episode.watchStatus;
+    // if (watchStatus) {
+    //   episode.watchStatus = watchStatus;
+    //   if (watchStatus === "watched") {
+    //     episode.watchedAt = new Date();
+    //   } else if (watchStatus === "unwatched") {
+    //     episode.watchedAt = undefined;
+    //   }
+    // }
 
     if (rating !== undefined) {
       if (rating < 1 || rating > 5) {
@@ -754,7 +737,6 @@ export const updateEpisodeStatus = async (req: AuthRequest, res: Response): Prom
 
     await episode.save();
 
-    // Update TV show watch time and status
     await updateTVShowStats(req.user.sub, episode.tmdbId);
 
     res.status(200).json({
@@ -776,10 +758,14 @@ const updateTVShowStats = async (userId: string, tmdbId: number) => {
       tmdbId
     });
 
-    // Calculate watched episodes and total watch time
-    const watchedEpisodes = episodes.filter(e => e.watchStatus === "watched");
-    const totalWatchTime = watchedEpisodes.reduce((sum, ep) => sum + (ep.runtime || 45), 0);
+    // Calculate stats
     const totalEpisodes = episodes.length;
+    const watchedEpisodes = episodes.filter(e => e.watchStatus === "watched");
+    const skippedEpisodes = episodes.filter(e => e.watchStatus === "skipped");
+    const totalWatchedEpisodes = watchedEpisodes.length + skippedEpisodes.length;
+    
+    // Calculate total watch time (only from watched episodes, skipped are ignored for time)
+    const totalWatchTime = watchedEpisodes.reduce((sum, ep) => sum + (ep.runtime || 45), 0);
 
     // Update TV show in Media collection
     const tvShow = await Media.findOne({
@@ -789,12 +775,15 @@ const updateTVShowStats = async (userId: string, tmdbId: number) => {
     });
 
     if (tvShow) {
-      tvShow.watchTimeMinutes = totalWatchTime;
+      tvShow.totalEpisodesWatched = totalWatchedEpisodes;
+      tvShow.totalWatchTime = totalWatchTime;
       
-      // Update overall watch status
-      if (watchedEpisodes.length === 0) {
+      // Update overall watch status based on episode completion
+      if (totalEpisodes === 0) {
         tvShow.watchStatus = "planned";
-      } else if (watchedEpisodes.length === totalEpisodes) {
+      } else if (totalWatchedEpisodes === 0) {
+        tvShow.watchStatus = "planned";
+      } else if (totalWatchedEpisodes === totalEpisodes) {
         tvShow.watchStatus = "completed";
       } else {
         tvShow.watchStatus = "watching";
@@ -804,6 +793,95 @@ const updateTVShowStats = async (userId: string, tmdbId: number) => {
     }
   } catch (error) {
     console.error("Update TV show stats error:", error);
+  }
+};
+
+export const getEpisodeStatistics = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const userId = req.user.sub;
+
+    // Get all episodes for the user
+    const episodes = await Episode.find({ addedBy: userId });
+    
+    // Get all TV shows
+    const tvShows = await Media.find({ 
+      addedBy: userId, 
+      type: "tv" 
+    });
+
+    // Calculate statistics
+    const totalEpisodes = episodes.length;
+    const watchedEpisodes = episodes.filter(e => e.watchStatus === "watched").length;
+    const skippedEpisodes = episodes.filter(e => e.watchStatus === "skipped").length;
+    const totalWatched = watchedEpisodes + skippedEpisodes;
+    
+    const totalWatchTime = episodes
+      .filter(e => e.watchStatus === "watched")
+      .reduce((sum, ep) => sum + (ep.runtime || 45), 0);
+
+    // Calculate by TV show
+    const tvShowStats = await Promise.all(
+      tvShows.map(async (tvShow) => {
+        const showEpisodes = await Episode.find({ 
+          addedBy: userId, 
+          tmdbId: tvShow.tmdbId 
+        });
+        
+        const showWatchedEpisodes = showEpisodes.filter(e => e.watchStatus === "watched").length;
+        const showSkippedEpisodes = showEpisodes.filter(e => e.watchStatus === "skipped").length;
+        const showTotalWatched = showWatchedEpisodes + showSkippedEpisodes;
+        
+        const showWatchTime = showEpisodes
+          .filter(e => e.watchStatus === "watched")
+          .reduce((sum, ep) => sum + (ep.runtime || 45), 0);
+
+        return {
+          tmdbId: tvShow.tmdbId,
+          title: tvShow.title,
+          totalEpisodes: showEpisodes.length,
+          watchedEpisodes: showWatchedEpisodes,
+          skippedEpisodes: showSkippedEpisodes,
+          totalWatched: showTotalWatched,
+          watchTime: showWatchTime,
+          completionPercentage: showEpisodes.length > 0 
+            ? Math.round((showTotalWatched / showEpisodes.length) * 100) 
+            : 0
+        };
+      })
+    );
+
+    res.status(200).json({
+      message: "Episode statistics fetched successfully",
+      data: {
+        summary: {
+          totalTVShows: tvShows.length,
+          totalEpisodes,
+          watchedEpisodes,
+          skippedEpisodes,
+          totalWatched,
+          totalWatchTime,
+          completionPercentage: totalEpisodes > 0 
+            ? Math.round((totalWatched / totalEpisodes) * 100) 
+            : 0
+        },
+        byTVShow: tvShowStats,
+        recentWatched: await Episode.find({ 
+          addedBy: userId, 
+          watchStatus: "watched" 
+        })
+        .sort({ watchedAt: -1 })
+        .limit(5)
+        .lean()
+      }
+    });
+  } catch (err: any) {
+    console.error("Get episode statistics error:", err);
+    res.status(500).json({ message: err?.message });
   }
 };
 

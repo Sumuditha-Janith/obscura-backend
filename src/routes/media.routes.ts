@@ -14,32 +14,37 @@ import {
   addTVShowToWatchlist,
   fetchTVShowEpisodes,
   updateEpisodeStatus,
-
+  getEpisodeStatistics,
+  testStats
 } from "../controllers/media.controller";
 import { authenticate } from "../middleware/auth";
-import { testStats } from "../controllers/media.controller";
 
 const router = Router();
 
-// Public routes (no authentication required)
+// ==================== PUBLIC ROUTES ====================
 router.get("/search", searchMedia);
 router.get("/details/:type/:tmdbId", getMediaDetails);
 router.get("/trending", getTrending);
 router.get("/popular", getPopularMovies);
-router.post("/watchlist", authenticate, addToWatchlist); // For movies
-router.post("/watchlist/tv", authenticate, addTVShowToWatchlist); // For TV shows
-router.get("/watchlist", authenticate, getWatchlist);
-router.get("/tv/:tmdbId/episodes", authenticate, getTVShowEpisodes);
-router.post("/tv/:tmdbId/season/:season/fetch", authenticate, fetchTVShowEpisodes);
-router.put("/episodes/:episodeId/status", authenticate, updateEpisodeStatus);
 
-// Protected routes (authentication required)
-router.post("/watchlist", authenticate, addToWatchlist);
-router.get("/watchlist", authenticate, getWatchlist);
-router.get("/watchlist/stats", authenticate, getWatchlistStats);
-router.get("/watchlist/debug", authenticate, debugWatchlist);
-router.put("/watchlist/:mediaId/status", authenticate, updateWatchStatus);
-router.delete("/watchlist/:mediaId", authenticate, removeFromWatchlist);
-router.get("/watchlist/test", authenticate, testStats);
+// ==================== PROTECTED ROUTES ====================
+
+// Watchlist Routes
+router.post("/watchlist", authenticate, addToWatchlist); // Add movie to watchlist
+router.post("/watchlist/tv", authenticate, addTVShowToWatchlist); // Add TV show to watchlist
+router.get("/watchlist", authenticate, getWatchlist); // Get all watchlist items
+router.get("/watchlist/stats", authenticate, getWatchlistStats); // Get watchlist statistics
+router.get("/watchlist/debug", authenticate, debugWatchlist); // Debug endpoint
+router.put("/watchlist/:mediaId/status", authenticate, updateWatchStatus); // Update movie/TV show status
+router.delete("/watchlist/:mediaId", authenticate, removeFromWatchlist); // Remove from watchlist
+router.get("/watchlist/test", authenticate, testStats); // Test stats endpoint
+
+// TV Show Episode Routes
+router.get("/tv/:tmdbId/episodes", authenticate, getTVShowEpisodes); // Get episodes for a TV show
+router.post("/tv/:tmdbId/season/:season/fetch", authenticate, fetchTVShowEpisodes); // Fetch episodes from TMDB
+router.put("/episodes/:episodeId/status", authenticate, updateEpisodeStatus); // Update episode status
+
+// Episode Statistics Route
+router.get("/episodes/stats", authenticate, getEpisodeStatistics); // Get episode statistics
 
 export default router;

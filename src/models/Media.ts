@@ -17,11 +17,10 @@ export interface IMedia extends Document {
   overview?: string;
   
   // TV Show specific fields
-  seasonNumber?: number;
-  episodeNumber?: number;
-  episodeTitle?: string;
   seasonCount?: number;
   episodeCount?: number;
+  totalEpisodesWatched?: number;
+  totalWatchTime?: number;
   
   createdAt?: Date;
   updatedAt?: Date;
@@ -48,16 +47,15 @@ const mediaSchema = new Schema<IMedia>(
     overview: { type: String },
     
     // TV Show specific fields
-    seasonNumber: { type: Number },
-    episodeNumber: { type: Number },
-    episodeTitle: { type: String },
-    seasonCount: { type: Number },
-    episodeCount: { type: Number }
+    seasonCount: { type: Number, default: 1 },
+    episodeCount: { type: Number, default: 1 },
+    totalEpisodesWatched: { type: Number, default: 0 },
+    totalWatchTime: { type: Number, default: 0 }
   },
   { timestamps: true }
 );
 
-// Index for faster queries
+// Indexes
 mediaSchema.index({ addedBy: 1, type: 1, watchStatus: 1 });
 mediaSchema.index({ addedBy: 1, tmdbId: 1, type: 1 });
 

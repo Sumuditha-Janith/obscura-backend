@@ -8,7 +8,7 @@ export interface IEpisode extends Document {
   episodeTitle: string;
   airDate: string;
   overview?: string;
-  runtime?: number;
+  runtime: number;
   stillPath?: string;
   addedBy: mongoose.Types.ObjectId;
   watchStatus: "unwatched" | "watched" | "skipped";
@@ -39,6 +39,14 @@ const episodeSchema = new Schema<IEpisode>(
 );
 
 // Compound index for efficient queries
-episodeSchema.index({ addedBy: 1, tmdbId: 1, seasonNumber: 1, episodeNumber: 1 }, { unique: true });
+episodeSchema.index({ 
+  addedBy: 1, 
+  tmdbId: 1, 
+  seasonNumber: 1, 
+  episodeNumber: 1 
+}, { unique: true });
+
+// Index for watched episodes
+episodeSchema.index({ addedBy: 1, watchStatus: 1 });
 
 export const Episode = mongoose.model<IEpisode>("Episode", episodeSchema);
