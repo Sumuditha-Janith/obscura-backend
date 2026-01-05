@@ -1,21 +1,21 @@
 import { Router } from "express";
 import {
-  searchMedia,
-  getMediaDetails,
-  addToWatchlist,
-  getWatchlist,
-  updateWatchStatus,
-  removeFromWatchlist,
-  getWatchlistStats,
-  getTrending,
-  getPopularMovies,
-  debugWatchlist,
-  getTVShowEpisodes,
-  addTVShowToWatchlist,
-  fetchTVShowEpisodes,
-  updateEpisodeStatus,
-  getEpisodeStatistics,
-  testStats
+    searchMedia,
+    getMediaDetails,
+    addToWatchlist,
+    getWatchlist,
+    updateWatchStatus,
+    removeFromWatchlist,
+    getWatchlistStats,
+    getTrending,
+    getPopularMovies,
+    debugWatchlist,
+    getTVShowEpisodes,
+    addTVShowToWatchlist,
+    fetchTVShowEpisodes,
+    updateEpisodeStatus,
+    getEpisodeStatistics,
+    testStats
 } from "../controllers/media.controller";
 import { authenticate } from "../middleware/auth";
 

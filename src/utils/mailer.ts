@@ -3,19 +3,19 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
+    service: "gmail",
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+    }
 });
 
 export const sendOTPEmail = async (to: string, otp: string): Promise<void> => {
-  const mailOptions = {
-    from: `"CINETIME" <${process.env.EMAIL_USER}>`,
-    to,
-    subject: "CINETIME - Email Verification OTP",
-    html: `
+    const mailOptions = {
+        from: `"CINETIME" <${process.env.EMAIL_USER}>`,
+        to,
+        subject: "CINETIME - Email Verification OTP",
+        html: `
       <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto;">
         <h2>Welcome to CINETIME 🎬</h2>
         <p>Your OTP for email verification is:</p>
@@ -28,29 +28,29 @@ export const sendOTPEmail = async (to: string, otp: string): Promise<void> => {
         <p style="color: #666;">© 2024 CINETIME. All rights reserved.</p>
       </div>
     `
-  };
+    };
 
-  await transporter.sendMail(mailOptions);
+    await transporter.sendMail(mailOptions);
 };
 
 export const sendPasswordResetEmail = async (to: string, resetUrl: string): Promise<void> => {
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    throw new Error('Email credentials not configured');
-  }
-
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+        throw new Error('Email credentials not configured');
     }
-  });
 
-  const mailOptions = {
-    from: `"CINETIME" <${process.env.EMAIL_USER}>`,
-    to,
-    subject: 'CINETIME - Password Reset Request',
-    html: `
+    const transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS
+        }
+    });
+
+    const mailOptions = {
+        from: `"CINETIME" <${process.env.EMAIL_USER}>`,
+        to,
+        subject: 'CINETIME - Password Reset Request',
+        html: `
       <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto; background: #0f172a; color: #f8fafc; padding: 20px; border-radius: 10px;">
         <div style="text-align: center; margin-bottom: 20px;">
           <h1 style="color: #e11d48; margin: 0;">🎬 CINETIME</h1>
@@ -79,13 +79,13 @@ export const sendPasswordResetEmail = async (to: string, resetUrl: string): Prom
         </div>
       </div>
     `
-  };
+    };
 
-  try {
-    await transporter.sendMail(mailOptions);
-    console.log(`Password reset email sent to ${to}`);
-  } catch (error) {
-    console.error('Error sending password reset email:', error);
-    throw new Error('Failed to send password reset email');
-  }
+    try {
+        await transporter.sendMail(mailOptions);
+        console.log(`Password reset email sent to ${to}`);
+    } catch (error) {
+        console.error('Error sending password reset email:', error);
+        throw new Error('Failed to send password reset email');
+    }
 };

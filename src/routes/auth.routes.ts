@@ -1,10 +1,10 @@
 import { Router } from "express";
 import {
-  getMyDetails,
-  handleRefreshToken,
-  login,
-  register,
-  verifyOTP
+    getMyDetails,
+    handleRefreshToken,
+    login,
+    register,
+    verifyOTP
 } from "../controllers/auth.controller";
 import { authenticate } from "../middleware/auth";
 
