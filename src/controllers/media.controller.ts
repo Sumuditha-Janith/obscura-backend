@@ -325,34 +325,20 @@ export const getWatchlistStats = async (req: AuthRequest, res: Response): Promis
     const userId = req.user.sub;
     console.log(`📊 Fetching stats for user: ${userId}`);
 
-    // Get simple counts first to verify
-    const totalItems = await Media.countDocuments({ addedBy: userId });
-    const completedItems = await Media.countDocuments({ 
-      addedBy: userId, 
-      watchStatus: "completed" 
-    });
-    const plannedItems = await Media.countDocuments({ 
-      addedBy: userId, 
-      watchStatus: "planned" 
-    });
-    const watchingItems = await Media.countDocuments({ 
-      addedBy: userId, 
-      watchStatus: "watching" 
-    });
-
-    console.log(`📈 Direct counts: Total=${totalItems}, Completed=${completedItems}, Planned=${plannedItems}, Watching=${watchingItems}`);
-
-    // Get all items to debug
-    const allItems = await Media.find({ addedBy: userId })
-      .select("title type watchStatus watchTimeMinutes")
+    // Get all media items
+    const allMediaItems = await Media.find({ addedBy: userId })
+      .select('title type watchStatus watchTimeMinutes')
       .lean();
 
-    console.log(`📋 All items in database (${allItems.length}):`);
-    allItems.forEach(item => {
-      console.log(`  - ${item.title}: ${item.watchStatus} (${item.watchTimeMinutes} mins)`);
-    });
+    // Get all episodes
+    const allEpisodes = await Episode.find({ addedBy: userId })
+      .select('watchStatus runtime')
+      .lean();
 
-    // Calculate stats manually to ensure accuracy
+    console.log(`📋 Found ${allMediaItems.length} media items and ${allEpisodes.length} episodes`);
+
+    // Calculate stats manually
+    // let totalItems = 0;
     let totalWatchTime = 0;
     let movieStats = { total: 0, completed: 0, watchTime: 0 };
     let tvStats = { total: 0, completed: 0, watchTime: 0 };
@@ -372,38 +358,45 @@ export const getWatchlistStats = async (req: AuthRequest, res: Response): Promis
       tv: 0
     };
 
-    // Calculate all stats
-    allItems.forEach(item => {
-      // Count by type
-      typeCounts[item.type] = (typeCounts[item.type] || 0) + 1;
-
-      // Count by status
-      const status = item.watchStatus || "planned";
-      statusCounts[status].count += 1;
-      
-      // Add watch time if completed
-      if (status === "completed") {
-        const watchTime = item.watchTimeMinutes || 0;
-        statusCounts.completed.time += watchTime;
-        totalWatchTime += watchTime;
-
-        // Add to type-specific completed stats
-        if (item.type === "movie") {
-          movieStats.completed += 1;
-          movieStats.watchTime += watchTime;
-        } else if (item.type === "tv") {
-          tvStats.completed += 1;
-          tvStats.watchTime += watchTime;
-        }
-      }
-
-      // Update type totals
+    // Calculate movie stats
+    allMediaItems.forEach(item => {
       if (item.type === "movie") {
         movieStats.total += 1;
+        typeCounts.movie += 1;
+        
+        const status = item.watchStatus || "planned";
+        statusCounts[status].count += 1;
+        
+        if (status === "completed") {
+          movieStats.completed += 1;
+          const watchTime = item.watchTimeMinutes || 0;
+          movieStats.watchTime += watchTime;
+          statusCounts.completed.time += watchTime;
+          totalWatchTime += watchTime;
+        }
       } else if (item.type === "tv") {
         tvStats.total += 1;
+        typeCounts.tv += 1;
+        
+        const status = item.watchStatus || "planned";
+        statusCounts[status].count += 1;
+        
+        // TV shows get their time from episodes, not from watchTimeMinutes
+        if (status === "completed") {
+          tvStats.completed += 1;
+        }
       }
     });
+
+    // Calculate TV episode watch time separately
+    const watchedEpisodes = allEpisodes.filter(ep => ep.watchStatus === "watched");
+    const tvEpisodeWatchTime = watchedEpisodes.reduce((sum, ep) => sum + (ep.runtime || 45), 0);
+    
+    tvStats.watchTime = tvEpisodeWatchTime;
+    statusCounts.completed.time += tvEpisodeWatchTime;
+    totalWatchTime += tvEpisodeWatchTime;
+    
+    console.log(`📺 TV Episode stats: ${watchedEpisodes.length} watched episodes, ${tvEpisodeWatchTime} minutes`);
 
     // Convert status counts to array
     Object.entries(statusCounts).forEach(([status, data]) => {
@@ -432,7 +425,7 @@ export const getWatchlistStats = async (req: AuthRequest, res: Response): Promis
 
     // Build response
     const responseData = {
-      totalItems,
+      totalItems: allMediaItems.length,
       totalWatchTime,
       totalWatchTimeFormatted: formatTime(totalWatchTime),
 
@@ -459,15 +452,10 @@ export const getWatchlistStats = async (req: AuthRequest, res: Response): Promis
     };
 
     console.log("📊 Calculated stats response:");
-    console.log("- Total items:", totalItems);
-    console.log("- Completed count:", responseData.completedCount);
-    console.log("- Planned count:", responseData.plannedCount);
-    console.log("- Watching count:", responseData.watchingCount);
+    console.log("- Total items:", responseData.totalItems);
     console.log("- Total watch time:", totalWatchTime, "mins");
-    console.log("- Movie stats:", movieStats);
-    console.log("- TV stats:", tvStats);
-    console.log("- By status:", byStatus);
-    console.log("- By type:", byType);
+    console.log("- Movie watch time:", movieStats.watchTime, "mins");
+    console.log("- TV watch time:", tvStats.watchTime, "mins");
 
     res.status(200).json({
       message: "Watchlist stats fetched successfully",
@@ -804,7 +792,6 @@ export const updateEpisodeStatus = async (req: AuthRequest, res: Response): Prom
   }
 };
 
-// Updated updateTVShowStats function
 const updateTVShowStats = async (userId: string, tmdbId: number) => {
   try {
     // Get all episodes for this TV show
@@ -845,7 +832,7 @@ const updateTVShowStats = async (userId: string, tmdbId: number) => {
       }
 
       await tvShow.save();
-      console.log(`✅ Updated TV show ${tvShow.title}: ${totalWatchedEpisodes}/${totalEpisodes} episodes watched, status: ${tvShow.watchStatus}`);
+      console.log(`✅ Updated TV show ${tvShow.title}: ${totalWatchedEpisodes}/${totalEpisodes} episodes watched, ${totalWatchTime} minutes, status: ${tvShow.watchStatus}`);
     }
   } catch (error) {
     console.error("Update TV show stats error:", error);
@@ -872,13 +859,12 @@ export const getEpisodeStatistics = async (req: AuthRequest, res: Response): Pro
 
     // Calculate statistics
     const totalEpisodes = episodes.length;
-    const watchedEpisodes = episodes.filter(e => e.watchStatus === "watched").length;
-    const skippedEpisodes = episodes.filter(e => e.watchStatus === "skipped").length;
-    const totalWatched = watchedEpisodes + skippedEpisodes;
+    const watchedEpisodes = episodes.filter(e => e.watchStatus === "watched");
+    const skippedEpisodes = episodes.filter(e => e.watchStatus === "skipped");
+    const totalWatched = watchedEpisodes.length + skippedEpisodes.length;
     
-    const totalWatchTime = episodes
-      .filter(e => e.watchStatus === "watched")
-      .reduce((sum, ep) => sum + (ep.runtime || 45), 0);
+    // Calculate total watch time from watched episodes
+    const totalWatchTime = watchedEpisodes.reduce((sum, ep) => sum + (ep.runtime || 45), 0);
 
     // Calculate by TV show
     const tvShowStats = await Promise.all(
@@ -903,7 +889,7 @@ export const getEpisodeStatistics = async (req: AuthRequest, res: Response): Pro
           watchedEpisodes: showWatchedEpisodes,
           skippedEpisodes: showSkippedEpisodes,
           totalWatched: showTotalWatched,
-          watchTime: showWatchTime,
+          watchTime: showWatchTime, // Include watch time per show
           completionPercentage: showEpisodes.length > 0 
             ? Math.round((showTotalWatched / showEpisodes.length) * 100) 
             : 0
@@ -917,10 +903,10 @@ export const getEpisodeStatistics = async (req: AuthRequest, res: Response): Pro
         summary: {
           totalTVShows: tvShows.length,
           totalEpisodes,
-          watchedEpisodes,
-          skippedEpisodes,
+          watchedEpisodes: watchedEpisodes.length,
+          skippedEpisodes: skippedEpisodes.length,
           totalWatched,
-          totalWatchTime,
+          totalWatchTime, // Make sure this is included
           completionPercentage: totalEpisodes > 0 
             ? Math.round((totalWatched / totalEpisodes) * 100) 
             : 0
