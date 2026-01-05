@@ -572,72 +572,6 @@ export const getTVShowEpisodes = async (req: AuthRequest, res: Response): Promis
   }
 };
 
-
-
-export const addTVShowToWatchlist = async (req: AuthRequest, res: Response): Promise<void> => {
-  try {
-    if (!req.user) {
-      res.status(401).json({ message: "Unauthorized" });
-      return;
-    }
-
-    const { tmdbId, title, type, posterPath, backdrop_path, seasonCount, episodeCount } = req.body;
-
-    if (!tmdbId || !title || type !== "tv") {
-      res.status(400).json({ message: "Invalid TV show data" });
-      return;
-    }
-
-    // Check if TV show already exists in watchlist
-    const existingTVShow = await Media.findOne({
-      tmdbId,
-      addedBy: req.user.sub,
-      type: "tv"
-    });
-
-    if (existingTVShow) {
-      res.status(400).json({ message: "TV show already in your watchlist" });
-      return;
-    }
-
-    // Get TV show details from TMDB
-    let tvDetails: any = {};
-    try {
-      tvDetails = await TMDBService.getTVDetails(tmdbId);
-    } catch (error) {
-      console.error("Failed to fetch TV details:", error);
-    }
-
-    // Create TV show entry in Media collection
-    const newTVShow = new Media({
-      tmdbId,
-      title,
-      type: "tv",
-      posterPath: posterPath || tvDetails.poster_path || "",
-      backdrop_path: backdrop_path || tvDetails.backdrop_path || "",
-      releaseDate: tvDetails.first_air_date || "",
-      addedBy: req.user.sub,
-      watchStatus: "planned",
-      watchTimeMinutes: 0, // Will be calculated based on watched episodes
-      vote_average: tvDetails.vote_average || 0,
-      vote_count: tvDetails.vote_count || 0,
-      overview: tvDetails.overview || "",
-      seasonCount: seasonCount || tvDetails.number_of_seasons || 1,
-      episodeCount: episodeCount || tvDetails.number_of_episodes || 1
-    });
-
-    await newTVShow.save();
-
-    res.status(201).json({
-      message: "TV show added to watchlist successfully",
-      data: newTVShow
-    });
-  } catch (err: any) {
-    console.error("Add TV show error:", err);
-    res.status(500).json({ message: err?.message });
-  }
-};
-
 export const fetchTVShowEpisodes = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     if (!req.user) {
@@ -691,6 +625,134 @@ export const fetchTVShowEpisodes = async (req: AuthRequest, res: Response): Prom
   }
 };
 
+// In the addTVShowToWatchlist function - Replace the entire function with this:
+export const addTVShowToWatchlist = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    if (!req.user) {
+      res.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const { tmdbId, title, type, posterPath, backdrop_path } = req.body;
+
+    if (!tmdbId || !title || type !== "tv") {
+      res.status(400).json({ message: "Invalid TV show data" });
+      return;
+    }
+
+    // Check if TV show already exists in watchlist
+    const existingTVShow = await Media.findOne({
+      tmdbId,
+      addedBy: req.user.sub,
+      type: "tv"
+    });
+
+    if (existingTVShow) {
+      res.status(400).json({ message: "TV show already in your watchlist" });
+      return;
+    }
+
+    // Get TV show details from TMDB
+    let tvDetails: any = {};
+    let seasonCount = 1;
+    let episodeCount = 1;
+    
+    try {
+      tvDetails = await TMDBService.getTVDetails(tmdbId);
+      seasonCount = tvDetails.number_of_seasons || 1;
+      episodeCount = tvDetails.number_of_episodes || 1;
+      
+      // Fetch episodes from all seasons
+      await fetchAllEpisodesForTVShow(req.user.sub, tmdbId, seasonCount, tvDetails.name || title);
+      
+    } catch (error) {
+      console.error("Failed to fetch TV details:", error);
+      // Don't fail the request if TMDB fails - just use defaults
+    }
+
+    // Create TV show entry in Media collection
+    const newTVShow = new Media({
+      tmdbId,
+      title,
+      type: "tv",
+      posterPath: posterPath || tvDetails.poster_path || "",
+      backdrop_path: backdrop_path || tvDetails.backdrop_path || "",
+      releaseDate: tvDetails.first_air_date || "",
+      addedBy: req.user.sub,
+      watchStatus: "planned", // Default status
+      watchTimeMinutes: 0,
+      vote_average: tvDetails.vote_average || 0,
+      vote_count: tvDetails.vote_count || 0,
+      overview: tvDetails.overview || "",
+      seasonCount: seasonCount,
+      episodeCount: episodeCount,
+      totalEpisodesWatched: 0,
+      totalWatchTime: 0
+    });
+
+    await newTVShow.save();
+
+    res.status(201).json({
+      message: "TV show added to watchlist successfully",
+      data: newTVShow
+    });
+  } catch (err: any) {
+    console.error("Add TV show error:", err);
+    res.status(500).json({ message: err?.message });
+  }
+};
+
+// Helper function to fetch all episodes for a TV show
+const fetchAllEpisodesForTVShow = async (userId: string, tmdbId: number, seasonCount: number, tvShowTitle: string) => {
+  try {
+    console.log(`📥 Fetching episodes for ${tvShowTitle} (${seasonCount} seasons)...`);
+    
+    for (let season = 1; season <= seasonCount; season++) {
+      try {
+        const tmdbResponse = await TMDBService.getTVSeasonDetails(tmdbId, season);
+        
+        // Store episodes in database
+        const episodesToSave = tmdbResponse.episodes.map((episode: any) => ({
+          tmdbId: tmdbId,
+          seasonNumber: season,
+          episodeNumber: episode.episode_number,
+          episodeTitle: episode.name,
+          airDate: episode.air_date,
+          overview: episode.overview,
+          runtime: episode.runtime || 45,
+          stillPath: episode.still_path,
+          addedBy: userId,
+          watchStatus: "unwatched"
+        }));
+
+        // Bulk upsert episodes
+        for (const episode of episodesToSave) {
+          await Episode.updateOne(
+            {
+              tmdbId: episode.tmdbId,
+              seasonNumber: episode.seasonNumber,
+              episodeNumber: episode.episodeNumber,
+              addedBy: episode.addedBy
+            },
+            episode,
+            { upsert: true }
+          );
+        }
+        
+        console.log(`✅ Season ${season}: ${episodesToSave.length} episodes saved`);
+      } catch (seasonError) {
+        console.error(`❌ Failed to fetch season ${season}:`, seasonError);
+        // Continue with other seasons even if one fails
+      }
+    }
+    
+    console.log(`🎉 Finished fetching all episodes for ${tvShowTitle}`);
+  } catch (error) {
+    console.error("Error fetching all episodes:", error);
+  }
+};
+
+// Updated updateEpisodeStatus function to handle TV show status updates
 export const updateEpisodeStatus = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     if (!req.user) {
@@ -699,7 +761,7 @@ export const updateEpisodeStatus = async (req: AuthRequest, res: Response): Prom
     }
 
     const { episodeId } = req.params;
-    const { watchStatus, rating } = req.body;
+    const { watchStatus } = req.body;
 
     if (!episodeId) {
       res.status(400).json({ message: "Episode ID is required" });
@@ -717,26 +779,19 @@ export const updateEpisodeStatus = async (req: AuthRequest, res: Response): Prom
       return;
     }
 
-    // const oldStatus = episode.watchStatus;
-    // if (watchStatus) {
-    //   episode.watchStatus = watchStatus;
-    //   if (watchStatus === "watched") {
-    //     episode.watchedAt = new Date();
-    //   } else if (watchStatus === "unwatched") {
-    //     episode.watchedAt = undefined;
-    //   }
-    // }
-
-    if (rating !== undefined) {
-      if (rating < 1 || rating > 5) {
-        res.status(400).json({ message: "Rating must be between 1 and 5" });
-        return;
+    // Update episode status
+    if (watchStatus) {
+      episode.watchStatus = watchStatus;
+      if (watchStatus === "watched") {
+        episode.watchedAt = new Date();
+      } else {
+        episode.watchedAt = undefined;
       }
-      episode.rating = rating;
     }
 
     await episode.save();
 
+    // Update TV show stats based on episode status
     await updateTVShowStats(req.user.sub, episode.tmdbId);
 
     res.status(200).json({
@@ -749,7 +804,7 @@ export const updateEpisodeStatus = async (req: AuthRequest, res: Response): Prom
   }
 };
 
-// Helper function to update TV show stats
+// Updated updateTVShowStats function
 const updateTVShowStats = async (userId: string, tmdbId: number) => {
   try {
     // Get all episodes for this TV show
@@ -758,13 +813,15 @@ const updateTVShowStats = async (userId: string, tmdbId: number) => {
       tmdbId
     });
 
+    if (episodes.length === 0) return;
+
     // Calculate stats
     const totalEpisodes = episodes.length;
     const watchedEpisodes = episodes.filter(e => e.watchStatus === "watched");
     const skippedEpisodes = episodes.filter(e => e.watchStatus === "skipped");
     const totalWatchedEpisodes = watchedEpisodes.length + skippedEpisodes.length;
     
-    // Calculate total watch time (only from watched episodes, skipped are ignored for time)
+    // Calculate total watch time (only from watched episodes)
     const totalWatchTime = watchedEpisodes.reduce((sum, ep) => sum + (ep.runtime || 45), 0);
 
     // Update TV show in Media collection
@@ -778,10 +835,8 @@ const updateTVShowStats = async (userId: string, tmdbId: number) => {
       tvShow.totalEpisodesWatched = totalWatchedEpisodes;
       tvShow.totalWatchTime = totalWatchTime;
       
-      // Update overall watch status based on episode completion
-      if (totalEpisodes === 0) {
-        tvShow.watchStatus = "planned";
-      } else if (totalWatchedEpisodes === 0) {
+      // Update watch status based on watched episodes
+      if (totalWatchedEpisodes === 0) {
         tvShow.watchStatus = "planned";
       } else if (totalWatchedEpisodes === totalEpisodes) {
         tvShow.watchStatus = "completed";
@@ -790,6 +845,7 @@ const updateTVShowStats = async (userId: string, tmdbId: number) => {
       }
 
       await tvShow.save();
+      console.log(`✅ Updated TV show ${tvShow.title}: ${totalWatchedEpisodes}/${totalEpisodes} episodes watched, status: ${tvShow.watchStatus}`);
     }
   } catch (error) {
     console.error("Update TV show stats error:", error);

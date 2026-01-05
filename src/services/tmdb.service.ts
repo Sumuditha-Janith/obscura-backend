@@ -208,9 +208,21 @@ async getTVSeasonDetails(tvId: number, seasonNumber: number): Promise<any> {
   try {
     const response = await this.axiosInstance.get(`/tv/${tvId}/season/${seasonNumber}`);
     return response.data;
-  } catch (error) {
-    console.error("TMDB Season Details Error:", error);
-    throw new Error("Failed to fetch season details");
+  } catch (error: any) {
+    console.error("TMDB Season Details Error:", error.message);
+    
+    // Return empty episode data if season doesn't exist
+    if (error.response?.status === 404) {
+      return {
+        episodes: [],
+        season_number: seasonNumber,
+        name: `Season ${seasonNumber}`,
+        overview: '',
+        air_date: ''
+      };
+    }
+    
+    throw new Error(`Failed to fetch season ${seasonNumber} details: ${error.message}`);
   }
 }
 
