@@ -68,8 +68,7 @@ interface TMDBMovieDetailsResponse {
     revenue?: number;
     homepage?: string;
     imdb_id?: string;
-    media_type?: "movie" | "tv";
-    [key: string]: any; // Allow additional properties
+    [key: string]: any;
 }
 
 interface TMDBTVDetailsResponse {
@@ -85,7 +84,6 @@ interface TMDBTVDetailsResponse {
     number_of_seasons?: number;
     number_of_episodes?: number;
     episode_run_time?: number[];
-    media_type?: "tv";
     [key: string]: any;
 }
 
@@ -163,6 +161,7 @@ interface TMDBSeasonResponse {
     name: string;
     overview: string;
     air_date: string;
+    [key: string]: any;
 }
 
 class TMDBService {
@@ -185,19 +184,21 @@ class TMDBService {
     // Search movies and TV shows
     async search(query: string, page: number = 1): Promise<TMDBResponse> {
         try {
-            const response: AxiosResponse<TMDBMultiSearchResponse> = await this.axiosInstance.get('/search/multi', {
+            const response = await this.axiosInstance.get<TMDBMultiSearchResponse>('/search/multi', {
                 params: { query, page },
             });
 
+            const data = response.data;
+            
             // Filter out items without media_type
-            const filteredResults = response.data.results.filter((item) =>
+            const filteredResults = data.results.filter((item) =>
                 item.media_type === 'movie' || item.media_type === 'tv'
             );
 
             // Transform to our format
             const results = filteredResults.map((item) => {
                 if (item.media_type === 'movie') {
-                    return {
+                    const movie: TMDBMovie = {
                         id: item.id,
                         title: item.title || '',
                         overview: item.overview,
@@ -207,10 +208,11 @@ class TMDBService {
                         vote_average: item.vote_average,
                         vote_count: item.vote_count,
                         genre_ids: item.genre_ids,
-                        media_type: 'movie' as const,
+                        media_type: 'movie',
                     };
+                    return movie;
                 } else {
-                    return {
+                    const tvShow: TMDBTVShow = {
                         id: item.id,
                         name: item.name || '',
                         overview: item.overview,
@@ -220,16 +222,17 @@ class TMDBService {
                         vote_average: item.vote_average,
                         vote_count: item.vote_count,
                         genre_ids: item.genre_ids,
-                        media_type: 'tv' as const,
+                        media_type: 'tv',
                     };
+                    return tvShow;
                 }
             });
 
             return {
-                page: response.data.page,
+                page: data.page,
                 results: results,
-                total_pages: response.data.total_pages,
-                total_results: response.data.total_results,
+                total_pages: data.total_pages,
+                total_results: data.total_results,
             };
         } catch (error: any) {
             console.error('TMDB Search Error:', error.message);
@@ -240,7 +243,7 @@ class TMDBService {
     // Get movie details
     async getMovieDetails(movieId: number): Promise<TMDBMovieDetails> {
         try {
-            const response: AxiosResponse<TMDBMovieDetailsResponse> = await this.axiosInstance.get(`/movie/${movieId}`, {
+            const response = await this.axiosInstance.get<TMDBMovieDetailsResponse>(`/movie/${movieId}`, {
                 params: {
                     append_to_response: 'videos,credits,similar',
                 },
@@ -257,7 +260,7 @@ class TMDBService {
                 vote_average: data.vote_average,
                 vote_count: data.vote_count,
                 genre_ids: data.genre_ids || [],
-                media_type: 'movie' as const,
+                media_type: 'movie',
                 runtime: data.runtime || 120,
                 genres: data.genres || [],
                 tagline: data.tagline || '',
@@ -276,7 +279,7 @@ class TMDBService {
     // Get TV show details
     async getTVDetails(tvId: number): Promise<any> {
         try {
-            const response: AxiosResponse<TMDBTVDetailsResponse> = await this.axiosInstance.get(`/tv/${tvId}`, {
+            const response = await this.axiosInstance.get<TMDBTVDetailsResponse>(`/tv/${tvId}`, {
                 params: {
                     append_to_response: 'videos,credits,similar',
                 },
@@ -296,7 +299,7 @@ class TMDBService {
                 vote_count: data.vote_count,
                 genre_ids: data.genre_ids || [],
                 runtime: 45,
-                media_type: 'tv' as const,
+                media_type: 'tv',
                 number_of_seasons: data.number_of_seasons,
                 number_of_episodes: data.number_of_episodes,
                 episode_run_time: data.episode_run_time,
@@ -310,21 +313,30 @@ class TMDBService {
     // Get popular movies
     async getPopularMovies(page: number = 1): Promise<TMDBResponse> {
         try {
-            const response: AxiosResponse<TMDBPopularMoviesResponse> = await this.axiosInstance.get('/movie/popular', {
+            const response = await this.axiosInstance.get<TMDBPopularMoviesResponse>('/movie/popular', {
                 params: { page },
             });
 
-            const resultsWithType = response.data.results.map((item) => ({
-                ...item,
-                media_type: 'movie' as const,
-                name: item.title, // Add name for consistency
+            const data = response.data;
+            
+            const resultsWithType: TMDBMovie[] = data.results.map((item) => ({
+                id: item.id,
+                title: item.title,
+                overview: item.overview,
+                poster_path: item.poster_path,
+                backdrop_path: item.backdrop_path,
+                release_date: item.release_date,
+                vote_average: item.vote_average,
+                vote_count: item.vote_count,
+                genre_ids: item.genre_ids,
+                media_type: 'movie',
             }));
 
             return {
-                page: response.data.page,
+                page: data.page,
                 results: resultsWithType,
-                total_pages: response.data.total_pages,
-                total_results: response.data.total_results,
+                total_pages: data.total_pages,
+                total_results: data.total_results,
             };
         } catch (error: any) {
             console.error('TMDB Popular Movies Error:', error.message);
@@ -335,37 +347,52 @@ class TMDBService {
     // Get trending content
     async getTrending(timeWindow: 'day' | 'week' = 'week', page: number = 1): Promise<TMDBResponse> {
         try {
-            const response: AxiosResponse<TMDBTrendingResponse> = await this.axiosInstance.get(`/trending/all/${timeWindow}`, {
+            const response = await this.axiosInstance.get<TMDBTrendingResponse>(`/trending/all/${timeWindow}`, {
                 params: { page },
             });
 
-            const filteredResults = response.data.results
-                .filter((item) => item.media_type === 'movie' || item.media_type === 'tv')
-                .map((item) => {
-                    if (item.media_type === 'movie') {
-                        return {
-                            ...item,
-                            title: item.title || item.name || 'Unknown Movie',
-                            name: item.title || item.name || 'Unknown Movie',
-                            release_date: item.release_date || item.first_air_date || '',
-                            media_type: 'movie' as const,
-                        };
-                    } else {
-                        return {
-                            ...item,
-                            title: item.name || item.title || 'Unknown TV Show',
-                            name: item.name || item.title || 'Unknown TV Show',
-                            release_date: item.first_air_date || item.release_date || '',
-                            media_type: 'tv' as const,
-                        };
-                    }
-                });
+            const data = response.data;
+            
+            const filteredResults = data.results
+                .filter((item) => item.media_type === 'movie' || item.media_type === 'tv');
+
+            const results: (TMDBMovie | TMDBTVShow)[] = filteredResults.map((item) => {
+                if (item.media_type === 'movie') {
+                    const movie: TMDBMovie = {
+                        id: item.id,
+                        title: item.title || item.name || 'Unknown Movie',
+                        overview: item.overview,
+                        poster_path: item.poster_path,
+                        backdrop_path: item.backdrop_path,
+                        release_date: item.release_date || item.first_air_date || '',
+                        vote_average: item.vote_average,
+                        vote_count: item.vote_count,
+                        genre_ids: item.genre_ids,
+                        media_type: 'movie',
+                    };
+                    return movie;
+                } else {
+                    const tvShow: TMDBTVShow = {
+                        id: item.id,
+                        name: item.name || item.title || 'Unknown TV Show',
+                        overview: item.overview,
+                        poster_path: item.poster_path,
+                        backdrop_path: item.backdrop_path,
+                        first_air_date: item.first_air_date || item.release_date || '',
+                        vote_average: item.vote_average,
+                        vote_count: item.vote_count,
+                        genre_ids: item.genre_ids,
+                        media_type: 'tv',
+                    };
+                    return tvShow;
+                }
+            });
 
             return {
-                page: response.data.page,
-                results: filteredResults,
-                total_pages: response.data.total_pages,
-                total_results: response.data.total_results,
+                page: data.page,
+                results: results,
+                total_pages: data.total_pages,
+                total_results: data.total_results,
             };
         } catch (error: any) {
             console.error('TMDB Trending Error:', error.message);
@@ -376,8 +403,9 @@ class TMDBService {
     // Get movie genres
     async getMovieGenres(): Promise<{ id: number; name: string }[]> {
         try {
-            const response: AxiosResponse<TMDBGenresResponse> = await this.axiosInstance.get('/genre/movie/list');
-            return response.data.genres || [];
+            const response = await this.axiosInstance.get<TMDBGenresResponse>('/genre/movie/list');
+            const data = response.data;
+            return data.genres || [];
         } catch (error: any) {
             console.error('TMDB Genres Error:', error.message);
             throw new Error(`Failed to fetch genres: ${error.message}`);
@@ -387,8 +415,9 @@ class TMDBService {
     // Get TV season details
     async getTVSeasonDetails(tvId: number, seasonNumber: number): Promise<any> {
         try {
-            const response: AxiosResponse<TMDBSeasonResponse> = await this.axiosInstance.get(`/tv/${tvId}/season/${seasonNumber}`);
-            return response.data;
+            const response = await this.axiosInstance.get<TMDBSeasonResponse>(`/tv/${tvId}/season/${seasonNumber}`);
+            const data = response.data;
+            return data;
         } catch (error: any) {
             console.error("TMDB Season Details Error:", error.message);
 
@@ -410,11 +439,12 @@ class TMDBService {
     // Get all TV show seasons
     async getTVSeasons(tvId: number): Promise<any> {
         try {
-            const response: AxiosResponse<TMDBTVDetailsResponse> = await this.axiosInstance.get(`/tv/${tvId}`);
+            const response = await this.axiosInstance.get<TMDBTVDetailsResponse>(`/tv/${tvId}`);
+            const data = response.data;
             return {
-                seasons: response.data,
-                totalSeasons: response.data.number_of_seasons || 0,
-                totalEpisodes: response.data.number_of_episodes || 0
+                seasons: data,
+                totalSeasons: data.number_of_seasons || 0,
+                totalEpisodes: data.number_of_episodes || 0
             };
         } catch (error: any) {
             console.error("TMDB Seasons Error:", error.message);
@@ -425,22 +455,30 @@ class TMDBService {
     // Search TV shows only
     async searchTVShows(query: string, page: number = 1): Promise<TMDBResponse> {
         try {
-            const response: AxiosResponse<TMDBMultiSearchResponse> = await this.axiosInstance.get("/search/tv", {
+            const response = await this.axiosInstance.get<TMDBMultiSearchResponse>("/search/tv", {
                 params: { query, page },
             });
 
-            const resultsWithType = response.data.results.map((item) => ({
-                ...item,
-                media_type: 'tv' as const,
-                title: item.name || '',
-                release_date: item.first_air_date || '',
+            const data = response.data;
+            
+            const results: TMDBTVShow[] = data.results.map((item) => ({
+                id: item.id,
+                name: item.name || '',
+                overview: item.overview,
+                poster_path: item.poster_path,
+                backdrop_path: item.backdrop_path,
+                first_air_date: item.first_air_date || '',
+                vote_average: item.vote_average,
+                vote_count: item.vote_count,
+                genre_ids: item.genre_ids,
+                media_type: 'tv',
             }));
 
             return {
-                page: response.data.page,
-                results: resultsWithType,
-                total_pages: response.data.total_pages,
-                total_results: response.data.total_results,
+                page: data.page,
+                results: results,
+                total_pages: data.total_pages,
+                total_results: data.total_results,
             };
         } catch (error: any) {
             console.error("TMDB TV Search Error:", error.message);
