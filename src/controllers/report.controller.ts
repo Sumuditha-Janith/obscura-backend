@@ -1,3 +1,4 @@
+// cinetime-backend/src/controllers/report.controller.ts
 import { Response } from "express";
 import { AuthRequest } from "../middleware/auth";
 import PDFDocument from "pdfkit";
@@ -48,14 +49,93 @@ export const generateMediaReport = async (req: AuthRequest, res: Response): Prom
             ...dateFilter 
         }).sort({ createdAt: -1 });
 
-        // Fetch episode data
+        // Fetch episode data with TV show information
         const episodes = await Episode.find({ 
             addedBy: userId,
             ...dateFilter 
         });
 
+        // Group episodes by TV show
+        const episodesByShow = new Map<number, any[]>();
+        
+        episodes.forEach(episode => {
+            if (!episodesByShow.has(episode.tmdbId)) {
+                episodesByShow.set(episode.tmdbId, []);
+            }
+            episodesByShow.get(episode.tmdbId)!.push(episode);
+        });
+
+        // Get completed movies
+        const completedMovies = mediaItems.filter(item => 
+            item.type === "movie" && item.watchStatus === "completed"
+        );
+
+        // Get watching TV shows
+        const watchingTVShows = mediaItems.filter(item => 
+            item.type === "tv" && item.watchStatus === "watching"
+        );
+
+        // Get completed TV shows
+        const completedTVShows = mediaItems.filter(item => 
+            item.type === "tv" && item.watchStatus === "completed"
+        );
+
         // Calculate statistics
         const stats = await calculateMediaStats(mediaItems, episodes, period as string);
+
+        // Add TV show episodes data to stats
+        stats.tvShowEpisodes = [];
+        
+        // Get watched episodes for currently watching shows
+        watchingTVShows.forEach(show => {
+            const showEpisodes = episodesByShow.get(show.tmdbId) || [];
+            const watchedEpisodes = showEpisodes.filter(ep => ep.watchStatus === "watched");
+            
+            stats.tvShowEpisodes.push({
+                showId: show.tmdbId,
+                showTitle: show.title,
+                status: "watching",
+                watchedEpisodes: watchedEpisodes.map(ep => ({
+                    season: ep.seasonNumber,
+                    episode: ep.episodeNumber,
+                    title: ep.episodeTitle,
+                    date: ep.watchedAt || ep.createdAt,
+                    runtime: ep.runtime || 45
+                })),
+                totalWatched: watchedEpisodes.length,
+                totalEpisodes: showEpisodes.length
+            });
+        });
+
+        // Get all episodes for completed shows
+        completedTVShows.forEach(show => {
+            const showEpisodes = episodesByShow.get(show.tmdbId) || [];
+            const watchedEpisodes = showEpisodes.filter(ep => ep.watchStatus === "watched");
+            
+            stats.tvShowEpisodes.push({
+                showId: show.tmdbId,
+                showTitle: show.title,
+                status: "completed",
+                watchedEpisodes: watchedEpisodes.map(ep => ({
+                    season: ep.seasonNumber,
+                    episode: ep.episodeNumber,
+                    title: ep.episodeTitle,
+                    date: ep.watchedAt || ep.createdAt,
+                    runtime: ep.runtime || 45
+                })),
+                totalWatched: watchedEpisodes.length,
+                totalEpisodes: showEpisodes.length
+            });
+        });
+
+        // Add completed movies data
+        stats.completedMovies = completedMovies.map(movie => ({
+            title: movie.title,
+            releaseYear: movie.releaseDate ? new Date(movie.releaseDate).getFullYear() : "Unknown",
+            watchTime: movie.watchTimeMinutes || 120,
+            rating: movie.rating || "Not rated",
+            completedDate: movie.updatedAt
+        }));
 
         // Generate PDF
         const doc = new PDFDocument({
@@ -97,12 +177,7 @@ const calculateMediaStats = async (mediaItems: any[], episodes: any[], period: s
             planned: { movies: 0, tvShows: 0, time: 0 },
             watching: { movies: 0, tvShows: 0, time: 0 },
             completed: { movies: 0, tvShows: 0, time: 0 }
-        },
-        byGenre: {},
-        monthlyActivity: {},
-        topGenres: [],
-        topMovies: [],
-        topTVShows: []
+        }
     };
 
     // Calculate basic statistics
@@ -114,16 +189,6 @@ const calculateMediaStats = async (mediaItems: any[], episodes: any[], period: s
             
             if (item.watchStatus === "completed") {
                 stats.totals.totalWatchTime += item.watchTimeMinutes || 0;
-            }
-
-            // Add to top movies if completed and rated
-            if (item.watchStatus === "completed" && item.rating) {
-                stats.topMovies.push({
-                    title: item.title,
-                    rating: item.rating,
-                    watchTime: item.watchTimeMinutes || 0,
-                    date: item.updatedAt
-                });
             }
         } else if (item.type === "tv") {
             stats.totals.tvShows++;
@@ -139,17 +204,6 @@ const calculateMediaStats = async (mediaItems: any[], episodes: any[], period: s
             
             if (item.watchStatus === "completed") {
                 stats.totals.totalWatchTime += showWatchTime;
-            }
-
-            // Add to top TV shows if completed
-            if (item.watchStatus === "completed") {
-                stats.topTVShows.push({
-                    title: item.title,
-                    episodesWatched: showEpisodes.filter(ep => ep.watchStatus === "watched").length,
-                    totalEpisodes: item.episodeCount || showEpisodes.length,
-                    watchTime: showWatchTime,
-                    date: item.updatedAt
-                });
             }
         }
     });
@@ -167,38 +221,6 @@ const calculateMediaStats = async (mediaItems: any[], episodes: any[], period: s
             : 0,
         totalWatchTime: watchedEpisodes.reduce((sum, ep) => sum + (ep.runtime || 45), 0)
     };
-
-    // Calculate monthly activity
-    const monthlyData: Record<string, { movies: number, episodes: number, time: number }> = {};
-    
-    [...mediaItems, ...episodes].forEach(item => {
-        const date = new Date(item.createdAt);
-        const monthYear = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
-        
-        if (!monthlyData[monthYear]) {
-            monthlyData[monthYear] = { movies: 0, episodes: 0, time: 0 };
-        }
-        
-        if ('type' in item) {
-            if (item.type === "movie" && item.watchStatus === "completed") {
-                monthlyData[monthYear].movies++;
-                monthlyData[monthYear].time += item.watchTimeMinutes || 0;
-            }
-        } else if (item.watchStatus === "watched") {
-            monthlyData[monthYear].episodes++;
-            monthlyData[monthYear].time += item.runtime || 45;
-        }
-    });
-    
-    stats.monthlyActivity = monthlyData;
-
-    // Sort top lists
-    stats.topMovies.sort((a: any, b: any) => b.rating - a.rating || b.watchTime - a.watchTime);
-    stats.topTVShows.sort((a: any, b: any) => b.episodesWatched - a.episodesWatched || b.watchTime - a.watchTime);
-    
-    // Limit to top 5
-    stats.topMovies = stats.topMovies.slice(0, 5);
-    stats.topTVShows = stats.topTVShows.slice(0, 5);
 
     return stats;
 };
@@ -223,19 +245,33 @@ const generatePDFContent = async (doc: PDFKit.PDFDocument, user: any, stats: any
         return `${mins}m`;
     };
 
-    // Header
-    doc.fontSize(24)
+    // Helper function to format date
+    const formatDate = (dateString: string | Date): string => {
+        if (!dateString) return "Unknown";
+        const date = new Date(dateString);
+        return date.toLocaleDateString('en-US', { 
+            year: 'numeric', 
+            month: 'short', 
+            day: 'numeric' 
+        });
+    };
+
+    // Header - Use simple fonts to avoid encoding issues
+    doc.font('Helvetica-Bold')
+       .fontSize(24)
        .fillColor('#dc2626') // Rose color from theme
        .text('CINETIME', 50, 50)
        .moveDown(0.5);
     
-    doc.fontSize(16)
+    doc.font('Helvetica-Bold')
+       .fontSize(16)
        .fillColor('#374151') // Slate-700
-       .text('Media Activity Report', { underline: true })
+       .text('Media Activity Report', { underline: false })
        .moveDown(1);
 
     // User info
-    doc.fontSize(12)
+    doc.font('Helvetica')
+       .fontSize(12)
        .fillColor('#4b5563') // Slate-600
        .text(`User: ${email}`, { continued: true })
        .text(`  |  Period: ${periodText}`, { continued: true })
@@ -243,15 +279,17 @@ const generatePDFContent = async (doc: PDFKit.PDFDocument, user: any, stats: any
        .moveDown(2);
 
     // Summary Section
-    doc.fontSize(14)
+    doc.font('Helvetica-Bold')
+       .fontSize(14)
        .fillColor('#1f2937') // Slate-800
-       .text('📊 Summary Statistics', { underline: true })
+       .text('Summary Statistics')
        .moveDown(0.5);
 
     const summaryY = doc.y;
     
     // Left column - Totals
-    doc.fontSize(11)
+    doc.font('Helvetica')
+       .fontSize(11)
        .fillColor('#374151')
        .text('Total Items:', 50, summaryY)
        .fillColor('#111827')
@@ -302,16 +340,20 @@ const generatePDFContent = async (doc: PDFKit.PDFDocument, user: any, stats: any
 
     doc.moveDown(4);
 
-    // Episode Statistics
-    if (stats.totals.tvShows > 0) {
-        doc.fontSize(14)
+    // Episode Statistics Section
+    if (stats.episodeStats && stats.episodeStats.total > 0) {
+        doc.addPage();
+        
+        doc.font('Helvetica-Bold')
+           .fontSize(14)
            .fillColor('#1f2937')
-           .text('📺 Episode Statistics', { underline: true })
+           .text('Episode Statistics')
            .moveDown(0.5);
         
         const episodeY = doc.y;
         
-        doc.fontSize(11)
+        doc.font('Helvetica')
+           .fontSize(11)
            .fillColor('#374151')
            .text('Total Episodes:', 50, episodeY)
            .fillColor('#111827')
@@ -327,10 +369,12 @@ const generatePDFContent = async (doc: PDFKit.PDFDocument, user: any, stats: any
            .fillColor('#111827')
            .text(`${stats.episodeStats.skipped}`, 200, episodeY + 40);
         
-        doc.fillColor('#374151')
-           .text('Average Episode Rating:', 50, episodeY + 60)
-           .fillColor('#111827')
-           .text(`${stats.episodeStats.averageRating.toFixed(1)}/5`, 200, episodeY + 60);
+        if (stats.episodeStats.averageRating > 0) {
+            doc.fillColor('#374151')
+               .text('Average Episode Rating:', 50, episodeY + 60)
+               .fillColor('#111827')
+               .text(`${stats.episodeStats.averageRating.toFixed(1)}/5`, 200, episodeY + 60);
+        }
         
         doc.fillColor('#374151')
            .text('Total Episode Watch Time:', 50, episodeY + 80)
@@ -338,117 +382,159 @@ const generatePDFContent = async (doc: PDFKit.PDFDocument, user: any, stats: any
            .text(formatTime(stats.episodeStats.totalWatchTime), 200, episodeY + 80);
         
         doc.moveDown(5);
+
+        // Currently Watching TV Shows with Episodes
+        if (stats.tvShowEpisodes && stats.tvShowEpisodes.length > 0) {
+            const watchingShows = stats.tvShowEpisodes.filter((show: any) => show.status === "watching");
+            
+            if (watchingShows.length > 0) {
+                doc.font('Helvetica-Bold')
+                   .fontSize(14)
+                   .fillColor('#1f2937')
+                   .text('Currently Watching TV Shows')
+                   .moveDown(0.5);
+                
+                let showY = doc.y;
+                
+                watchingShows.forEach((show: any, showIndex: number) => {
+                    // Check if we need a new page
+                    if (showY > doc.page.height - 200) {
+                        doc.addPage();
+                        showY = 50;
+                    }
+                    
+                    doc.font('Helvetica-Bold')
+                       .fontSize(12)
+                       .fillColor('#dc2626')
+                       .text(`${showIndex + 1}. ${show.showTitle}`, 50, showY);
+                    
+                    doc.font('Helvetica')
+                       .fontSize(10)
+                       .fillColor('#6b7280')
+                       .text(`Watched ${show.totalWatched}/${show.totalEpisodes} episodes`, 50, showY + 18);
+                    
+                    let episodeY = showY + 40;
+                    
+                    // List watched episodes
+                    show.watchedEpisodes.forEach((episode: any) => {
+                        if (episodeY > doc.page.height - 100) {
+                            doc.addPage();
+                            episodeY = 50;
+                        }
+                        
+                        doc.font('Helvetica')
+                           .fontSize(9)
+                           .fillColor('#374151')
+                           .text(`S${episode.season}E${episode.episode}: ${episode.title}`, 70, episodeY)
+                           .fillColor('#6b7280')
+                           .text(`${episode.runtime} min | ${formatDate(episode.date)}`, 350, episodeY);
+                        
+                        episodeY += 16;
+                    });
+                    
+                    showY = episodeY + 20;
+                    doc.moveDown(1);
+                });
+            }
+
+            doc.moveDown(2);
+
+            // Completed TV Shows with Episodes
+            const completedShows = stats.tvShowEpisodes.filter((show: any) => show.status === "completed");
+            
+            if (completedShows.length > 0) {
+                doc.font('Helvetica-Bold')
+                   .fontSize(14)
+                   .fillColor('#1f2937')
+                   .text('Completed TV Shows')
+                   .moveDown(0.5);
+                
+                let completedShowY = doc.y;
+                
+                completedShows.forEach((show: any, showIndex: number) => {
+                    // Check if we need a new page
+                    if (completedShowY > doc.page.height - 200) {
+                        doc.addPage();
+                        completedShowY = 50;
+                    }
+                    
+                    doc.font('Helvetica-Bold')
+                       .fontSize(12)
+                       .fillColor('#059669')
+                       .text(`${showIndex + 1}. ${show.showTitle}`, 50, completedShowY);
+                    
+                    doc.font('Helvetica')
+                       .fontSize(10)
+                       .fillColor('#6b7280')
+                       .text(`Completed ${show.totalWatched}/${show.totalEpisodes} episodes`, 50, completedShowY + 18);
+                    
+                    let episodeY = completedShowY + 40;
+                    
+                    // List last 5 watched episodes (or all if less than 5)
+                    const episodesToShow = show.watchedEpisodes.slice(-5);
+                    
+                    episodesToShow.forEach((episode: any) => {
+                        if (episodeY > doc.page.height - 100) {
+                            doc.addPage();
+                            episodeY = 50;
+                        }
+                        
+                        doc.font('Helvetica')
+                           .fontSize(9)
+                           .fillColor('#374151')
+                           .text(`S${episode.season}E${episode.episode}: ${episode.title}`, 70, episodeY)
+                           .fillColor('#6b7280')
+                           .text(`${episode.runtime} min | ${formatDate(episode.date)}`, 350, episodeY);
+                        
+                        episodeY += 16;
+                    });
+                    
+                    completedShowY = episodeY + 20;
+                    doc.moveDown(1);
+                });
+            }
+        }
     }
 
-    // Top Movies Section
-    if (stats.topMovies.length > 0) {
-        doc.fontSize(14)
+    // Completed Movies Section
+    if (stats.completedMovies && stats.completedMovies.length > 0) {
+        doc.addPage();
+        
+        doc.font('Helvetica-Bold')
+           .fontSize(14)
            .fillColor('#1f2937')
-           .text('🏆 Top Rated Movies', { underline: true })
+           .text('Completed Movies')
            .moveDown(0.5);
         
         let movieY = doc.y;
         
-        stats.topMovies.forEach((movie: any, index: number) => {
-            doc.fontSize(10)
-               .fillColor('#374151')
-               .text(`${index + 1}. ${movie.title}`, 50, movieY)
-               .fillColor('#dc2626')
-               .text(`⭐ ${movie.rating}/5`, 300, movieY)
+        stats.completedMovies.forEach((movie: any, index: number) => {
+            // Check if we need a new page
+            if (movieY > doc.page.height - 100) {
+                doc.addPage();
+                movieY = 50;
+            }
+            
+            doc.font('Helvetica-Bold')
+               .fontSize(12)
+               .fillColor('#059669')
+               .text(`${index + 1}. ${movie.title} (${movie.releaseYear})`, 50, movieY);
+            
+            doc.font('Helvetica')
+               .fontSize(10)
                .fillColor('#6b7280')
-               .text(`⏱️ ${formatTime(movie.watchTime)}`, 350, movieY)
-               .text(`📅 ${new Date(movie.date).toLocaleDateString()}`, 420, movieY);
+               .text(`Watch Time: ${formatTime(movie.watchTime)}`, 70, movieY + 18);
             
-            movieY += 18;
+            if (movie.rating && movie.rating !== "Not rated") {
+                doc.fillColor('#f59e0b') // Amber for rating
+                   .text(`Rating: ${movie.rating}/5`, 200, movieY + 18);
+            }
+            
+            doc.fillColor('#6b7280')
+               .text(`Completed: ${formatDate(movie.completedDate)}`, 300, movieY + 18);
+            
+            movieY += 40;
         });
-        
-        doc.moveDown(stats.topMovies.length / 3);
-    }
-
-    // Top TV Shows Section
-    if (stats.topTVShows.length > 0) {
-        doc.fontSize(14)
-           .fillColor('#1f2937')
-           .text('🏆 Most Watched TV Shows', { underline: true })
-           .moveDown(0.5);
-        
-        let tvY = doc.y;
-        
-        stats.topTVShows.forEach((show: any, index: number) => {
-            const completion = show.totalEpisodes > 0 
-                ? ((show.episodesWatched / show.totalEpisodes) * 100).toFixed(1)
-                : '0';
-            
-            doc.fontSize(10)
-               .fillColor('#374151')
-               .text(`${index + 1}. ${show.title}`, 50, tvY)
-               .fillColor('#dc2626')
-               .text(`${show.episodesWatched}/${show.totalEpisodes} eps`, 300, tvY)
-               .fillColor('#6b7280')
-               .text(`${completion}%`, 380, tvY)
-               .text(`⏱️ ${formatTime(show.watchTime)}`, 420, tvY);
-            
-            tvY += 18;
-        });
-        
-        doc.moveDown(stats.topTVShows.length / 3);
-    }
-
-    // Monthly Activity Chart
-    if (Object.keys(stats.monthlyActivity).length > 0) {
-        doc.addPage();
-        
-        doc.fontSize(14)
-           .fillColor('#1f2937')
-           .text('📈 Monthly Activity', { underline: true })
-           .moveDown(1);
-        
-        const months = Object.keys(stats.monthlyActivity).sort();
-        const chartY = doc.y;
-        const barWidth = 20;
-        const maxHeight = 100;
-        
-        // Find max value for scaling
-        const maxValue = Math.max(...months.map(m => 
-            stats.monthlyActivity[m].movies + stats.monthlyActivity[m].episodes
-        ));
-        
-        months.forEach((month, index) => {
-            const x = 50 + (index * 60);
-            const activity = stats.monthlyActivity[month];
-            const total = activity.movies + activity.episodes;
-            const height = (total / maxValue) * maxHeight;
-            
-            // Draw bar
-            doc.rect(x, chartY + maxHeight - height, barWidth, height)
-               .fill('#dc2626');
-            
-            // Month label
-            doc.fontSize(8)
-               .fillColor('#374151')
-               .text(month.substring(5), x, chartY + maxHeight + 10, {
-                   width: barWidth,
-                   align: 'center'
-               });
-            
-            // Value label
-            doc.fontSize(7)
-               .fillColor('#6b7280')
-               .text(total.toString(), x, chartY + maxHeight - height - 15, {
-                   width: barWidth,
-                   align: 'center'
-               });
-        });
-        
-        // Legend
-        doc.fontSize(10)
-           .fillColor('#374151')
-           .text('Legend:', 50, chartY + maxHeight + 40)
-           .moveDown(0.5);
-        
-        doc.fontSize(8)
-           .fillColor('#dc2626')
-           .text('█ Movies & Episodes watched per month', 70, doc.y - 10);
     }
 
     // Footer
@@ -457,10 +543,11 @@ const generatePDFContent = async (doc: PDFKit.PDFDocument, user: any, stats: any
     for (let i = 0; i < totalPages; i++) {
         doc.switchToPage(i);
         
-        doc.fontSize(8)
+        doc.font('Helvetica')
+           .fontSize(8)
            .fillColor('#6b7280')
            .text(
-               `Page ${i + 1} of ${totalPages} • Cinetime Media Report • ${new Date().toLocaleDateString()}`,
+               `Page ${i + 1} of ${totalPages} • Cinetime Media Report • Generated on ${new Date().toLocaleDateString()}`,
                50,
                doc.page.height - 50,
                { align: 'center' }
