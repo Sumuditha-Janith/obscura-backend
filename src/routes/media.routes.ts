@@ -9,13 +9,11 @@ import {
     getWatchlistStats,
     getTrending,
     getPopularMovies,
-    debugWatchlist,
     getTVShowEpisodes,
     addTVShowToWatchlist,
     fetchTVShowEpisodes,
     updateEpisodeStatus,
-    getEpisodeStatistics,
-    testStats
+    getEpisodeStatistics
 } from "../controllers/media.controller";
 import { authenticate } from "../middleware/auth";
 import { generateMediaReport } from "../controllers/report.controller";
@@ -35,10 +33,8 @@ router.post("/watchlist", authenticate, addToWatchlist); // Add movie to watchli
 router.post("/watchlist/tv", authenticate, addTVShowToWatchlist); // Add TV show to watchlist
 router.get("/watchlist", authenticate, getWatchlist); // Get all watchlist items
 router.get("/watchlist/stats", authenticate, getWatchlistStats); // Get watchlist statistics
-router.get("/watchlist/debug", authenticate, debugWatchlist); // Debug endpoint
 router.put("/watchlist/:mediaId/status", authenticate, updateWatchStatus); // Update movie/TV show status
 router.delete("/watchlist/:mediaId", authenticate, removeFromWatchlist); // Remove from watchlist
-router.get("/watchlist/test", authenticate, testStats); // Test stats endpoint
 router.get("/report", authenticate, generateMediaReport); //pdf
 router.get("/tv/:tmdbId/episodes", authenticate, getTVShowEpisodes); // Get episodes for a TV show
 router.post("/tv/:tmdbId/season/:season/fetch", authenticate, fetchTVShowEpisodes); // Fetch episodes from TMDB
